@@ -1,22 +1,21 @@
-/// Modèle de Black-Scholes (1973).
-///
-/// Utilisé ici pour deux rôles :
-///   1. Pricer de référence (comparaison avec Heston).
-///   2. Convertisseur prix ↔ volatilité implicite.
-///
-/// Rappel de la formule Black-Scholes pour un call européen :
-///
-///   C = S·N(d₁) − K·e^{−rτ}·N(d₂)
-///
-///   d₁ = [ ln(S/K) + (r + σ²/2)·τ ] / (σ·√τ)
-///   d₂ = d₁ − σ·√τ
-///
-/// où N(·) est la fonction de répartition de la loi normale standard.
-
+//! Modèle de Black-Scholes.
+//!
+//! Utilisé ici pour deux rôles :
+//!   1. Pricer de référence (comparaison avec Heston).
+//!   2. Convertisseur prix ↔ volatilité implicite.
+//!
+//! Formule Black-Scholes pour un call européen :
+//!
+//!   C = S·N(d₁) − K·e^{−rτ}·N(d₂)
+//!
+//!   d₁ = [ ln(S/K) + (r + σ²/2)·τ ] / (σ·√τ)
+//!   d₂ = d₁ − σ·√τ
+//!
+//! où N(·) est la fonction de répartition de la loi normale standard.
 // ---------------------------------------------------------------------------
 // Densité et CDF normales
 // ---------------------------------------------------------------------------
-
+///
 /// Densité de la loi normale standard : n(x) = (1/√(2π))·exp(−x²/2)
 pub fn normal_pdf(x: f64) -> f64 {
     (-0.5 * x * x).exp() / (2.0 * std::f64::consts::PI).sqrt()
@@ -24,7 +23,7 @@ pub fn normal_pdf(x: f64) -> f64 {
 
 /// Fonction de répartition de la loi normale standard N(x) = P(Z ≤ x).
 ///
-/// # Méthode recommandée : approximation rationnelle (Abramowitz & Stegun, 26.2.17)
+/// # Méthode : approximation rationnelle (Abramowitz & Stegun, 26.2.17)
 ///
 /// Pour x ≥ 0 :
 ///
@@ -53,12 +52,9 @@ pub fn normal_cdf(x: f64) -> f64 {
 
     // Évaluation du polynôme par la méthode de Horner :
     //   p(t) = t·(b₁ + t·(b₂ + t·(b₃ + t·(b₄ + t·b₅))))
-    // Moins de multiplications, meilleure stabilité numérique.
-    let poly = t * (0.319381530
-        + t * (-0.356563782
-        + t * (1.781477937
-        + t * (-1.821255978
-        + t *   1.330274429))));
+    let poly = t
+        * (0.319381530
+            + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
 
     1.0 - normal_pdf(x) * poly
 }
@@ -82,21 +78,14 @@ pub fn normal_cdf(x: f64) -> f64 {
 ///   d₂ = d₁ − σ·√τ
 ///   C  = S·N(d₁) − K·e^{−rτ}·N(d₂)
 pub fn price_call(spot: f64, strike: f64, rate: f64, vol: f64, tau: f64) -> f64 {
-    todo!(
-        "Implémente le pricer Black-Scholes pour un call européen.
-
-         Étapes :
-           1. Calcule d₁ et d₂ (formules ci-dessus)
-           2. Retourne S·N(d₁) − K·exp(−r·τ)·N(d₂)
-
-         Astuce Rust : (spot / strike).ln() donne ln(S/K)
-        "
-    )
+    let d1 = ((spot / strike).ln() + tau * (rate + (vol * vol / 2.0))) / (vol * tau.sqrt());
+    let d2 = d1 - vol * tau.sqrt();
+    spot * normal_cdf(d1) - strike * (-rate * tau).exp() * normal_cdf(d2)
 }
 
 /// Prix d'un put européen par la parité call-put.
 ///
-///   P = C − S + K·e^{−rτ}
+///   Put = Call − Spot + Strike·e^{−rτ}
 pub fn price_put(spot: f64, strike: f64, rate: f64, vol: f64, tau: f64) -> f64 {
     price_call(spot, strike, rate, vol, tau) - spot + strike * (-rate * tau).exp()
 }
@@ -128,20 +117,29 @@ pub fn price_put(spot: f64, strike: f64, rate: f64, vol: f64, tau: f64) -> f64 {
 ///   4. Retourner Some((σ_low + σ_high) / 2)
 ///
 /// Tolérance suggérée : 1e-7. Max itérations : 100.
-pub fn implied_volatility(
-    price: f64,
-    spot: f64,
-    strike: f64,
-    rate: f64,
-    tau: f64,
-) -> Option<f64> {
-    todo!(
-        "Implémente la volatilité implicite par bisection.
+pub fn implied_volatility(price: f64, spot: f64, strike: f64, rate: f64, tau: f64) -> Option<f64> {
+    let mut sigma_low = 1e-6;
+    let mut sigma_high = 5.0;
+    let max_iter = 100;
+    let tolerance = 1e-7;
 
-         Conseils Rust :
-           - Une boucle `for _ in 0..max_iter {{ ... }}` convient parfaitement.
-           - Utilise `return Some(...)` pour sortir tôt si convergé.
-           - Utilise `return None` si le prix est hors des bornes.
-        "
-    )
+    if price > price_call(spot, strike, rate, sigma_high, tau)
+        || price < price_call(spot, strike, rate, sigma_low, tau)
+    {
+        return None;
+    }
+
+    for _ in 0..max_iter {
+        if (sigma_high - sigma_low) < tolerance {
+            return Some((sigma_high + sigma_low) / 2.0);
+        } else {
+            let sigma_mid = (sigma_high + sigma_low) / 2.0;
+            if price_call(spot, strike, rate, sigma_mid, tau) > price {
+                sigma_high = sigma_mid;
+            } else {
+                sigma_low = sigma_mid;
+            }
+        }
+    }
+    None
 }
