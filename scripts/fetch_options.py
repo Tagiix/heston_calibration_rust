@@ -50,13 +50,30 @@ def fetch_options(ticker: str, output_path: str) -> None:
 
     quotes: list[tuple[float, float, float]] = []
 
-    for exp_str in expirations[:6]:           # max 6 échéances
+    # Maturités cibles pour la calibration Heston (structure par terme complète)
+    TARGET_TAUS = [0.083, 0.25, 0.5, 1.0, 2.0]   # 1M, 3M, 6M, 1Y, 2Y
+
+    # Construire la liste complète des échéances valides (1 mois ≤ tau ≤ 2 ans)
+    valid_exps: list[tuple[float, str]] = []
+    for exp_str in expirations:
         exp_date = datetime.datetime.strptime(exp_str, "%Y-%m-%d")
         tau = (exp_date - now).days / 365.25
+        if 30 / 365 <= tau <= 2.0:
+            valid_exps.append((tau, exp_str))
 
-        if tau < 7 / 365 or tau > 2.0:        # < 1 semaine ou > 2 ans → ignoré
-            continue
+    if not valid_exps:
+        raise RuntimeError(f"Aucune échéance dans la plage 1 mois–2 ans pour « {ticker} ».")
 
+    # Sélectionner l'échéance la plus proche de chaque cible (sans doublon)
+    selected: list[tuple[float, str]] = []
+    used: set[str] = set()
+    for target in TARGET_TAUS:
+        best = min(valid_exps, key=lambda x: abs(x[0] - target))
+        if best[1] not in used:
+            selected.append(best)
+            used.add(best[1])
+
+    for tau, exp_str in selected:
         try:
             chain = t.option_chain(exp_str)
         except Exception as exc:
@@ -64,6 +81,7 @@ def fetch_options(ticker: str, output_path: str) -> None:
             continue
 
         calls = chain.calls
+        added = 0
 
         for _, row in calls.iterrows():
             strike = float(row["strike"])
@@ -75,10 +93,13 @@ def fetch_options(ticker: str, output_path: str) -> None:
                 continue
             if not (0.02 <= iv <= 3.0):         # IV entre 2 % et 300 %
                 continue
-            if volume < 5:
+            if volume < 1:                       # seuil bas : données de marché fermé
                 continue
 
             quotes.append((strike, tau, iv))
+            added += 1
+
+        print(f"  {exp_str}  τ={tau:.3f}  → {added} cotations", file=sys.stderr)
 
     if not quotes:
         raise RuntimeError(

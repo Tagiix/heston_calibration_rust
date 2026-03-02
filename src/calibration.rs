@@ -150,6 +150,7 @@ fn run_nelder_mead(
     quotes: &[MarketQuote],
     spot: f64,
     rate: f64,
+    max_iters: u64,
 ) -> (f64, Vec<f64>) {
     let simplex = make_simplex(&init, 0.1);
 
@@ -158,7 +159,7 @@ fn run_nelder_mead(
         .expect("sd_tolerance valide");
 
     let result = Executor::new(HestonObjective { quotes, spot, rate }, solver)
-        .configure(|state| state.max_iters(400))
+        .configure(|state| state.max_iters(max_iters))
         .run()
         .expect("NelderMead a convergé");
 
@@ -167,9 +168,7 @@ fn run_nelder_mead(
         .best_param
         .clone()
         .expect("argmin: aucun paramètre optimal trouvé");
-    let best_cost = result
-        .state()
-        .best_cost;
+    let best_cost = result.state().best_cost;
 
     (best_cost, best_vec)
 }
@@ -179,24 +178,45 @@ pub fn calibrate(
     spot: f64,
     rate: f64,
     _initial_params: HestonParams,
+    fast: bool,
 ) -> HestonParams {
+    // Paramètres de la grille et de l'optimisation selon le mode
+    let (kappas, thetas, xis, rhos, v0s, top_k, max_iters): (
+        &[f64], &[f64], &[f64], &[f64], &[f64], usize, u64,
+    ) = if fast {
+        // Mode rapide : grille 2×2×2×2×2 = 32 points, 1 start, 100 itérations
+        (
+            &[1.0_f64, 3.0],
+            &[0.03_f64, 0.06],
+            &[0.2_f64, 0.6],
+            &[-0.7_f64, -0.3],
+            &[0.03_f64, 0.06],
+            1,
+            100,
+        )
+    } else {
+        // Mode précis : grille 4×3×3×3×3 = 324 points, 5 starts, 400 itérations
+        (
+            &[0.5_f64, 1.0, 2.0, 4.0],
+            &[0.02_f64, 0.04, 0.06],
+            &[0.1_f64, 0.3, 0.5],
+            &[-0.8_f64, -0.5, -0.2],
+            &[0.02_f64, 0.04, 0.06],
+            TOP_K,
+            400,
+        )
+    };
+
     // -----------------------------------------------------------------------
     // Phase 1 — Grille grossière : collecter tous les candidats
     // -----------------------------------------------------------------------
-    let kappas = [0.5_f64, 1.0, 2.0, 4.0];
-    let thetas = [0.02_f64, 0.04, 0.06];
-    let xis = [0.1_f64, 0.3, 0.5];
-    let rhos = [-0.8_f64, -0.5, -0.2];
-    let v0s = [0.02_f64, 0.04, 0.06];
-
-    // (obj, params) pour tous les points de la grille
     let mut candidates: Vec<(f64, HestonParams)> = Vec::new();
 
-    for &kappa in &kappas {
-        for &theta in &thetas {
-            for &xi in &xis {
-                for &rho in &rhos {
-                    for &v0 in &v0s {
+    for &kappa in kappas {
+        for &theta in thetas {
+            for &xi in xis {
+                for &rho in rhos {
+                    for &v0 in v0s {
                         let params = HestonParams::new(kappa, theta, xi, rho, v0);
                         let obj = objective(&params, quotes, spot, rate);
                         candidates.push((obj, params));
@@ -206,16 +226,16 @@ pub fn calibrate(
         }
     }
 
-    // Trier par coût croissant, garder les TOP_K meilleurs points de départ
+    // Trier par coût croissant, garder les top_k meilleurs points de départ
     candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Greater));
-    candidates.truncate(TOP_K);
+    candidates.truncate(top_k);
 
     // -----------------------------------------------------------------------
     // Phase 2 — Multi-start Nelder-Mead : un run par candidat
     // -----------------------------------------------------------------------
     let (_, best_vec) = candidates
         .into_iter()
-        .map(|(_, params)| run_nelder_mead(params_to_vec(&params), quotes, spot, rate))
+        .map(|(_, params)| run_nelder_mead(params_to_vec(&params), quotes, spot, rate, max_iters))
         .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Greater))
         .expect("au moins un candidat");
 

@@ -22,6 +22,7 @@ mod utils;
 struct CliArgs {
     ticker:    Option<String>,
     realistic: bool,
+    fast:      bool,
 }
 
 fn parse_args() -> CliArgs {
@@ -37,13 +38,15 @@ Options:
                       (ex: --ticker SPY, --ticker AAPL)
                       Les données sont sauvegardées dans data/market_surface.csv
   --realistic         Utilise la surface statique SPX stylisée (45 points)
+  --fast              Calibration rapide : grille 2×2×2×2×2 = 32 pts, 1 start, 100 iters NM
+                      (vs 324 pts, 5 starts, 400 iters par défaut)
   (aucun flag)        Charge data/market_surface.csv ou génère une surface synthétique
 
 Exemples:
-  cargo run                       # Surface synthétique
-  cargo run -- --realistic        # Surface réaliste style SPX
-  cargo run -- --ticker SPY       # Données live Yahoo Finance
-  cargo run -- --ticker AAPL      # Données live Apple
+  cargo run                            # Surface synthétique
+  cargo run -- --realistic             # Surface réaliste style SPX
+  cargo run -- --ticker SPY            # Données live Yahoo Finance
+  cargo run -- --ticker SPY --fast     # Données live + calibration rapide
 "
         );
         std::process::exit(0);
@@ -55,8 +58,9 @@ Exemples:
         .map(|w| w[1].clone());
 
     let realistic = args.iter().any(|a| a == "--realistic");
+    let fast      = args.iter().any(|a| a == "--fast");
 
-    CliArgs { ticker, realistic }
+    CliArgs { ticker, realistic, fast }
 }
 
 fn main() {
@@ -195,7 +199,8 @@ fn main() {
 
     println!("\nObjectif initial : {:.6}", calibration::objective(&initial, &quotes, spot, rate));
 
-    let calibrated = calibration::calibrate(&quotes, spot, rate, initial);
+    if cli.fast { println!("Mode rapide activé (grille 32 pts, 1 start, 100 iters)."); }
+    let calibrated = calibration::calibrate(&quotes, spot, rate, initial, cli.fast);
 
     println!("\n╔══════════════════════════════════════╗");
     println!("║   Paramètres calibrés                ║");
