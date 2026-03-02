@@ -19,6 +19,11 @@ num-complex = "0.4"
 csv = "1"
 serde = { version = "1", features = ["derive"] }
 
+# Optimisation sans gradient (NelderMead pour la phase 2)
+argmin = "0.10"
+argmin-math = { version = "0.4", features = ["vec"] }
+
+
 [dev-dependencies]
 # Comparaisons flottantes approchées dans les tests
 approx = "0.5"

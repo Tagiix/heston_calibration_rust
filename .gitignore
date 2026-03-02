@@ -1,0 +1,11 @@
+# Rust build artifacts
+target/
+
+# Python virtualenv
+.venv/
+
+# Downloaded market data (generated, not source)
+data/
+
+# References / PDFs (large files, not source code)
+references/
